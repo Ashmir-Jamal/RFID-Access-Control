@@ -174,9 +174,9 @@ Feel free to use, modify, and distribute for educational purposes.
 
 ## 🙋 Author
 
-**[Your Name]**  
-College Project — RFID Access Control System  
-Department of [Your Department] | [Your College Name] | [Year]
+**MD ASHMIR JAMAL**  
+College Minor Project — RFID Access Control System  
+Department of Electrical and Electronics Engineering | BCE PATNA | 2021-2025
 
 ---
 
