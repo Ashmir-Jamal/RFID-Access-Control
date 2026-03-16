@@ -2,8 +2,8 @@
  * ============================================================
  *  RFID ACCESS CONTROL SYSTEM
  *  Hardware : Arduino Uno + RC522 RFID Module
- *  Author   : [Your Name]
- *  Date     : 2025
+ *  Author   : MD ASHMIR JAMAL
+ *  Date     : 2024
  *  Version  : 1.0
  * ============================================================
  *
@@ -30,305 +30,434 @@
  *  │  3.3V       │  3.3V            │
  *  └─────────────┴──────────────────┘
  *
- *  Other connections:
- *    Green LED  → Pin 6 (through 220Ω resistor)
- *    Red LED    → Pin 7 (through 220Ω resistor)
- *    Buzzer     → Pin 8
- *    Servo      → Pin 5
- *    LCD (I2C)  → SDA → A4, SCL → A5 (address 0x27)
- *
- *  LIBRARIES REQUIRED (install via Arduino Library Manager):
- *    1. MFRC522  by GithubCommunity
- *    2. Servo    (built-in)
- *    3. LiquidCrystal_I2C  by Frank de Brabander
- *    4. Wire     (built-in)
+ * @dependencies
+ *   - MFRC522 Library by GithubCommunity
+ *     Install via: Arduino IDE > Sketch > Include Library >
+ *                  Manage Libraries > Search "MFRC522"
+ *   - SPI Library (built-in with Arduino IDE)
+ * 
+ * @license     MIT License
+ * 
  * ============================================================
  */
 
-// ─── Library Includes ────────────────────────────────────────
-#include <SPI.h>               // SPI communication (used by RC522)
-#include <MFRC522.h>           // RC522 RFID reader library
-#include <Servo.h>             // Servo motor control
-#include <Wire.h>              // I2C communication (used by LCD)
-#include <LiquidCrystal_I2C.h> // I2C LCD library
+// ============================================================
+//  LIBRARY INCLUSIONS
+// ============================================================
 
-// ─── Pin Definitions ─────────────────────────────────────────
-#define SS_PIN    10   // RC522 Slave Select (SDA) pin
-#define RST_PIN   9    // RC522 Reset pin
-#define GREEN_LED 6    // Green LED → Access Granted indicator
-#define RED_LED   7    // Red LED   → Access Denied indicator
-#define BUZZER    8    // Buzzer pin (active buzzer recommended)
-#define SERVO_PIN 5    // Servo signal pin
+#include <SPI.h>       // SPI communication protocol (used by RC522)
+#include <MFRC522.h>   // RFID RC522 library for card reading
 
-// ─── Constants ────────────────────────────────────────────────
-#define LOCK_ANGLE    0    // Servo angle when door is LOCKED
-#define UNLOCK_ANGLE  90   // Servo angle when door is UNLOCKED
-#define ACCESS_DELAY  3000 // Time (ms) door stays unlocked after access
 
-// ─── Object Instantiation ────────────────────────────────────
-MFRC522 rfid(SS_PIN, RST_PIN);   // Create RC522 RFID object
-Servo   doorServo;                // Create Servo object
-LiquidCrystal_I2C lcd(0x27, 16, 2); // LCD at I2C address 0x27, 16 cols × 2 rows
+// ============================================================
+//  PIN DEFINITIONS
+// ============================================================
 
-// ─── Authorised Card UIDs ─────────────────────────────────────
-/*
- *  Add the UID bytes of every authorised RFID card/tag here.
- *  Each UID is typically 4 bytes (shown in HEX).
- *  You can find a card's UID by running the ReadUID example
- *  sketch that comes with the MFRC522 library, or by opening
- *  the Serial Monitor after uploading this sketch and scanning
- *  an unknown card – the UID will be printed for you.
- *
- *  Format: { 0xXX, 0xXX, 0xXX, 0xXX }
+#define SS_PIN    10   // SDA/SS pin for RC522 (Slave Select for SPI)
+#define RST_PIN   9    // Reset pin for RC522
+
+#define GREEN_LED 7    // Green LED -> blinks on Access GRANTED
+#define RED_LED   6    // Red LED   -> blinks on Access DENIED
+#define BUZZER    5    // Buzzer    -> beeps as audio feedback
+#define RELAY_PIN 4    // Relay pin -> controls door lock (optional)
+
+
+// ============================================================
+//  CONSTANTS & TIMING CONFIGURATION
+// ============================================================
+
+#define ACCESS_DELAY     2000   // Duration (ms) relay stays ON after access grant
+#define DENIED_DELAY     1000   // Duration (ms) denied signal stays ON
+#define BEEP_SHORT       100    // Short beep duration (ms) -- used for granted
+#define BEEP_LONG        500    // Long beep duration  (ms) -- used for denied
+#define SERIAL_BAUD      9600   // Serial monitor baud rate
+
+
+// ============================================================
+//  OBJECT INITIALIZATION
+// ============================================================
+
+/**
+ * Create an MFRC522 instance.
+ * This object handles all communication with the RC522 module
+ * via the SPI bus using the defined SS and RST pins.
  */
-const byte AUTHORISED_UIDS[][4] = {
-  { 0xA3, 0x4F, 0x2B, 0x11 },  // Card 1 – e.g. Student ID
-  { 0xDE, 0xAD, 0xBE, 0xEF },  // Card 2 – e.g. Faculty Card
-  { 0x12, 0x34, 0x56, 0x78 }   // Card 3 – e.g. Admin Fob
+MFRC522 mfrc522(SS_PIN, RST_PIN);
+
+
+// ============================================================
+//  AUTHORIZED UID DATABASE
+// ============================================================
+
+/**
+ * Store the UIDs of all authorized RFID cards/tags here.
+ *
+ * HOW TO FIND YOUR CARD'S UID:
+ *   1. Upload this sketch first.
+ *   2. Open Serial Monitor (9600 baud).
+ *   3. Scan your card -- the UID will be printed.
+ *   4. Copy that UID into the array below.
+ *
+ * Each UID is a byte array. Most MIFARE Classic cards have
+ * a 4-byte UID (e.g., {0xDE, 0xAD, 0xBE, 0xEF}).
+ *
+ * To add more cards, increase NUM_AUTHORIZED_CARDS and
+ * add another byte array to authorizedUIDs[][].
+ */
+
+#define UID_BYTE_LENGTH       4    // Standard MIFARE card UID length in bytes
+#define NUM_AUTHORIZED_CARDS  3    // Total number of authorized cards registered
+
+// Replace these with your actual card UIDs after scanning them
+byte authorizedUIDs[NUM_AUTHORIZED_CARDS][UID_BYTE_LENGTH] = {
+  {0xA1, 0xB2, 0xC3, 0xD4},   // Card 1 -- e.g., Admin Card
+  {0x11, 0x22, 0x33, 0x44},   // Card 2 -- e.g., Student Card
+  {0xDE, 0xAD, 0xBE, 0xEF}    // Card 3 -- e.g., Faculty Card
 };
 
-// Calculate the total number of authorised cards automatically
-const byte TOTAL_AUTHORISED = sizeof(AUTHORISED_UIDS) / sizeof(AUTHORISED_UIDS[0]);
+// Labels for each authorized card (for Serial Monitor display)
+String cardLabels[NUM_AUTHORIZED_CARDS] = {
+  "Admin Card",
+  "Student Card",
+  "Faculty Card"
+};
 
-// ─── Function Prototypes ──────────────────────────────────────
-bool  isAuthorised(byte *uid, byte uidSize);
-void  grantAccess();
-void  denyAccess();
-void  beep(int times, int duration, int gap);
-void  showLCD(String line1, String line2);
-void  printUID(byte *uid, byte uidSize);
-void  lockDoor();
-void  unlockDoor();
 
-// =============================================================
-//  SETUP  – runs once when Arduino is powered on / reset
-// =============================================================
+// ============================================================
+//  FUNCTION PROTOTYPES (Declarations)
+// ============================================================
+
+void grantAccess(int cardIndex);
+void denyAccess();
+bool checkUID(byte *uid, byte uidSize, int &matchedIndex);
+void printUID(byte *uid, byte uidSize);
+void beep(int duration);
+void blinkLED(int pin, int times, int delayMs);
+
+
+// ============================================================
+//  SETUP FUNCTION -- Runs once on power-up / reset
+// ============================================================
+
 void setup() {
 
-  // ── Serial Monitor (for debugging / UID discovery) ────────
-  Serial.begin(9600);
-  Serial.println(F("------------------------------------"));
-  Serial.println(F("  RFID Access Control System Ready  "));
-  Serial.println(F("------------------------------------"));
+  // --- Initialize Serial Communication ---
+  // Allows us to print messages to the Arduino Serial Monitor
+  // for debugging and displaying card scan results.
+  Serial.begin(SERIAL_BAUD);
 
-  // ── SPI Bus Init (required by RC522) ─────────────────────
+  // --- Initialize SPI Bus ---
+  // The RC522 communicates with Arduino via the SPI protocol.
+  // This must be called before initializing the RFID module.
   SPI.begin();
 
-  // ── RC522 Module Init ─────────────────────────────────────
-  rfid.PCD_Init();
-  Serial.println(F("RC522 initialised. Scan a card..."));
+  // --- Initialize the RC522 RFID Module ---
+  // Resets the module and prepares it to read cards.
+  mfrc522.PCD_Init();
 
-  // ── Pin Modes ─────────────────────────────────────────────
+  // --- Configure Output Pins ---
   pinMode(GREEN_LED, OUTPUT);
   pinMode(RED_LED,   OUTPUT);
   pinMode(BUZZER,    OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
 
-  // ── Servo Init ────────────────────────────────────────────
-  doorServo.attach(SERVO_PIN);
-  lockDoor(); // Ensure door starts in LOCKED position
+  // --- Ensure all outputs start in OFF state ---
+  digitalWrite(GREEN_LED, LOW);
+  digitalWrite(RED_LED,   LOW);
+  digitalWrite(BUZZER,    LOW);
+  digitalWrite(RELAY_PIN, LOW);   // Relay OFF = Door LOCKED
 
-  // ── LCD Init ──────────────────────────────────────────────
-  lcd.init();
-  lcd.backlight();
-  showLCD("  RFID  System  ", "  Scan Your Card");
+  // --- Startup Confirmation Message ---
+  Serial.println("============================================");
+  Serial.println("   RFID ACCESS CONTROL SYSTEM READY");
+  Serial.println("============================================");
+  Serial.print  ("  RC522 Firmware Version: 0x");
+  Serial.println(mfrc522.PCD_ReadRegister(mfrc522.VersionReg), HEX);
+  Serial.println("  Scan your RFID card to begin...");
+  Serial.println("============================================");
 
-  // ── Startup Beep (system ready indicator) ─────────────────
-  beep(1, 100, 0);
-  delay(500);
+  // Startup blink: both LEDs flash twice to confirm system is live
+  blinkLED(GREEN_LED, 2, 200);
+  blinkLED(RED_LED,   2, 200);
 }
 
-// =============================================================
-//  LOOP  – runs repeatedly after setup()
-// =============================================================
+
+// ============================================================
+//  LOOP FUNCTION -- Runs repeatedly after setup()
+// ============================================================
+
 void loop() {
 
-  // ── Wait for a new card to be present in the RF field ─────
-  // rfid.PICC_IsNewCardPresent() returns true when a card is detected
-  // rfid.PICC_ReadCardSerial()   returns true when UID is successfully read
-  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
-    return; // No card detected → restart loop
+  // --- Step 1: Check if a new card is present near the reader ---
+  // PICC_IsNewCardPresent() returns true if an RFID card is detected.
+  // If no card is nearby, skip the rest of the loop.
+  if (!mfrc522.PICC_IsNewCardPresent()) {
+    return;   // No card detected -- keep polling
   }
 
-  // ── Card Detected: Print UID to Serial Monitor ────────────
-  Serial.print(F("Card UID detected: "));
-  printUID(rfid.uid.uidByte, rfid.uid.size);
+  // --- Step 2: Try to read the card's UID ---
+  // PICC_ReadCardSerial() reads the UID of the detected card.
+  // Returns false if reading fails (e.g., card moved away too quickly).
+  if (!mfrc522.PICC_ReadCardSerial()) {
+    return;   // Reading failed -- try again next loop iteration
+  }
 
-  // ── Check if this card is authorised ──────────────────────
-  if (isAuthorised(rfid.uid.uidByte, rfid.uid.size)) {
-    grantAccess();
+  // --- Step 3: Print the scanned card's UID to Serial Monitor ---
+  Serial.println("\n--------------------------------------------");
+  Serial.print("Card Detected! UID: ");
+  printUID(mfrc522.uid.uidByte, mfrc522.uid.size);
+  Serial.println();
+
+  // --- Step 4: Check if the scanned UID is in the authorized list ---
+  int matchedIndex = -1;   // Will hold the index of matched card (-1 = no match)
+
+  if (checkUID(mfrc522.uid.uidByte, mfrc522.uid.size, matchedIndex)) {
+    // UID found in authorized list -- GRANT ACCESS
+    grantAccess(matchedIndex);
   } else {
+    // UID not found -- DENY ACCESS
     denyAccess();
   }
 
-  // ── Halt the card and stop encryption to allow next scan ──
-  rfid.PICC_HaltA();       // Put card into HALT state
-  rfid.PCD_StopCrypto1();  // Stop the encryption on the PCD
+  // --- Step 5: Halt the current card and stop encryption ---
+  // This is required to allow reading the NEXT card properly.
+  // Without this, the same card would be read in a loop continuously.
+  mfrc522.PICC_HaltA();         // Halt the current PICC (card)
+  mfrc522.PCD_StopCrypto1();    // Stop encrypted communication
 
-  // ── Reset LCD to standby message ──────────────────────────
-  showLCD("  RFID  System  ", "  Scan Your Card");
+  Serial.println("--------------------------------------------");
+  Serial.println("  Ready to scan next card...");
 }
 
-// =============================================================
-//  FUNCTION: isAuthorised
-//  PURPOSE : Compares the scanned card UID against every entry
-//            in the AUTHORISED_UIDS array.
-//  PARAMS  : uid      – pointer to the UID byte array
-//            uidSize  – number of bytes in the UID
-//  RETURNS : true  → card is authorised
-//            false → card is NOT authorised
-// =============================================================
-bool isAuthorised(byte *uid, byte uidSize) {
 
-  // Only 4-byte UIDs are stored in our authorised list
-  if (uidSize != 4) return false;
+// ============================================================
+//  FUNCTION: grantAccess()
+// ============================================================
+/**
+ * @brief  Executes the Access Granted sequence.
+ *
+ * Called when an authorized card is detected.
+ * - Prints a welcome message to Serial Monitor.
+ * - Turns ON the Green LED.
+ * - Activates the relay (unlocks the door).
+ * - Gives two short beeps as audio confirmation.
+ * - Keeps the door unlocked for ACCESS_DELAY milliseconds.
+ * - Then re-locks the door and turns off the LED.
+ *
+ * @param cardIndex  Index of the matched card in authorizedUIDs[][]
+ *                   Used to print the card's label.
+ */
+void grantAccess(int cardIndex) {
 
-  // Iterate over each authorised UID
-  for (byte card = 0; card < TOTAL_AUTHORISED; card++) {
-    bool match = true;
+  Serial.println(">>> ACCESS GRANTED <<<");
+  Serial.print  ("    Welcome! [");
+  Serial.print  (cardLabels[cardIndex]);
+  Serial.println("]");
+
+  // Turn ON Green LED
+  digitalWrite(GREEN_LED, HIGH);
+
+  // Activate relay to unlock the door / trigger the lock mechanism
+  digitalWrite(RELAY_PIN, HIGH);
+
+  // Two short beeps -- pleasant audio confirmation
+  beep(BEEP_SHORT);
+  delay(100);
+  beep(BEEP_SHORT);
+
+  // Keep door unlocked for the defined delay period
+  delay(ACCESS_DELAY);
+
+  // Deactivate relay -- door re-locks
+  digitalWrite(RELAY_PIN, LOW);
+
+  // Turn OFF Green LED
+  digitalWrite(GREEN_LED, LOW);
+}
+
+
+// ============================================================
+//  FUNCTION: denyAccess()
+// ============================================================
+/**
+ * @brief  Executes the Access Denied sequence.
+ *
+ * Called when an unrecognized card is detected.
+ * - Prints an access denied message to Serial Monitor.
+ * - Turns ON the Red LED.
+ * - Gives one long beep as a warning tone.
+ * - Keeps the red LED on for DENIED_DELAY milliseconds.
+ * - Then turns off the LED.
+ */
+void denyAccess() {
+
+  Serial.println(">>> ACCESS DENIED <<<");
+  Serial.println("    Unauthorized card detected!");
+
+  // Turn ON Red LED
+  digitalWrite(RED_LED, HIGH);
+
+  // One long beep -- warning tone
+  beep(BEEP_LONG);
+
+  // Keep denied signal active for the defined delay
+  delay(DENIED_DELAY);
+
+  // Turn OFF Red LED
+  digitalWrite(RED_LED, LOW);
+}
+
+
+// ============================================================
+//  FUNCTION: checkUID()
+// ============================================================
+/**
+ * @brief  Compares a scanned UID against the authorized UID list.
+ *
+ * Iterates through authorizedUIDs[][] and compares each stored
+ * UID byte-by-byte with the scanned card's UID.
+ *
+ * @param uid           Pointer to the scanned card's UID byte array
+ * @param uidSize       Number of bytes in the scanned UID
+ * @param matchedIndex  Reference variable -- set to the index of the
+ *                      matched card if found; remains -1 if not found
+ *
+ * @return  true  if UID matches any authorized card
+ *          false if no match found
+ */
+bool checkUID(byte *uid, byte uidSize, int &matchedIndex) {
+
+  // Only compare if UID length matches expected length
+  if (uidSize != UID_BYTE_LENGTH) {
+    return false;
+  }
+
+  // Loop through all registered authorized cards
+  for (int i = 0; i < NUM_AUTHORIZED_CARDS; i++) {
+
+    bool match = true;   // Assume match; disprove byte-by-byte
 
     // Compare each byte of the scanned UID with the stored UID
-    for (byte i = 0; i < 4; i++) {
-      if (uid[i] != AUTHORISED_UIDS[card][i]) {
-        match = false; // Byte mismatch → not this card
+    for (int j = 0; j < UID_BYTE_LENGTH; j++) {
+      if (uid[j] != authorizedUIDs[i][j]) {
+        match = false;   // Mismatch found -- this card is not a match
         break;
       }
     }
 
-    if (match) return true; // All 4 bytes matched → authorised!
+    // If all bytes matched, card is authorized
+    if (match) {
+      matchedIndex = i;   // Store which card index matched
+      return true;
+    }
   }
 
-  return false; // No match found in authorised list
+  // No match found after checking all authorized cards
+  return false;
 }
 
-// =============================================================
-//  FUNCTION: grantAccess
-//  PURPOSE : Actions performed when an authorised card is scanned
-//             • Turns ON green LED
-//             • Single beep
-//             • Unlocks door (servo rotates to UNLOCK_ANGLE)
-//             • Displays "Access Granted" on LCD
-//             • Waits ACCESS_DELAY ms, then re-locks
-// =============================================================
-void grantAccess() {
-  Serial.println(F(">> ACCESS GRANTED <<"));
 
-  // Visual indicator
-  digitalWrite(GREEN_LED, HIGH);
-  digitalWrite(RED_LED,   LOW);
+// ============================================================
+//  FUNCTION: printUID()
+// ============================================================
+/**
+ * @brief  Prints a card UID to the Serial Monitor in HEX format.
+ *
+ * Iterates through each byte of the UID and prints it as a
+ * two-digit hexadecimal value separated by spaces.
+ * Example output: "A1 B2 C3 D4"
+ *
+ * @param uid      Pointer to the UID byte array
+ * @param uidSize  Number of bytes in the UID
+ */
+void printUID(byte *uid, byte uidSize) {
 
-  // Audio indicator – one short beep
-  beep(1, 200, 0);
+  for (byte i = 0; i < uidSize; i++) {
 
-  // LCD feedback
-  showLCD(">> WELCOME! <<  ", "Access  Granted ");
+    // Print leading zero for single-digit hex values (e.g., "0F" not "F")
+    if (uid[i] < 0x10) {
+      Serial.print("0");
+    }
 
-  // Physically unlock the door
-  unlockDoor();
+    Serial.print(uid[i], HEX);   // Print byte as uppercase HEX
 
-  // Keep door unlocked for ACCESS_DELAY milliseconds
-  delay(ACCESS_DELAY);
-
-  // Lock the door again
-  lockDoor();
-
-  // Turn off green LED
-  digitalWrite(GREEN_LED, LOW);
-}
-
-// =============================================================
-//  FUNCTION: denyAccess
-//  PURPOSE : Actions performed when an unauthorised card is scanned
-//             • Turns ON red LED
-//             • Three rapid beeps (alarm pattern)
-//             • Door stays LOCKED
-//             • Displays "Access Denied" on LCD
-// =============================================================
-void denyAccess() {
-  Serial.println(F(">> ACCESS DENIED <<"));
-
-  // Visual indicator
-  digitalWrite(RED_LED,   HIGH);
-  digitalWrite(GREEN_LED, LOW);
-
-  // Audio indicator – three beeps (warning pattern)
-  beep(3, 150, 100);
-
-  // LCD feedback
-  showLCD("!! DENIED !!    ", "Unauthorised Card");
-
-  // Hold the denied state briefly so the user can read the LCD
-  delay(2000);
-
-  // Turn off red LED
-  digitalWrite(RED_LED, LOW);
-}
-
-// =============================================================
-//  FUNCTION: unlockDoor
-//  PURPOSE : Rotates the servo to the UNLOCKED position
-// =============================================================
-void unlockDoor() {
-  doorServo.write(UNLOCK_ANGLE);
-  Serial.println(F("Door: UNLOCKED"));
-  delay(500); // Small delay for servo to reach position
-}
-
-// =============================================================
-//  FUNCTION: lockDoor
-//  PURPOSE : Rotates the servo back to the LOCKED position
-// =============================================================
-void lockDoor() {
-  doorServo.write(LOCK_ANGLE);
-  Serial.println(F("Door: LOCKED"));
-  delay(500); // Small delay for servo to reach position
-}
-
-// =============================================================
-//  FUNCTION: beep
-//  PURPOSE : Generates a beep pattern on the buzzer
-//  PARAMS  : times    – how many beeps to produce
-//            duration – length of each beep in milliseconds
-//            gap      – pause between beeps in milliseconds
-// =============================================================
-void beep(int times, int duration, int gap) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(BUZZER, HIGH); // Buzzer ON
-    delay(duration);
-    digitalWrite(BUZZER, LOW);  // Buzzer OFF
-    if (i < times - 1) {
-      delay(gap);               // Pause between beeps (skip after last)
+    if (i < uidSize - 1) {
+      Serial.print(" ");          // Add space between bytes
     }
   }
 }
 
-// =============================================================
-//  FUNCTION: showLCD
-//  PURPOSE : Clears the LCD and prints two lines of text
-//  PARAMS  : line1 – string for the first  row (max 16 chars)
-//            line2 – string for the second row (max 16 chars)
-// =============================================================
-void showLCD(String line1, String line2) {
-  lcd.clear();
 
-  lcd.setCursor(0, 0); // Column 0, Row 0
-  lcd.print(line1);
-
-  lcd.setCursor(0, 1); // Column 0, Row 1
-  lcd.print(line2);
+// ============================================================
+//  FUNCTION: beep()
+// ============================================================
+/**
+ * @brief  Activates the buzzer for a specified duration.
+ *
+ * Turns the buzzer ON, waits for the given duration, then
+ * turns it OFF. Acts as a simple blocking beep function.
+ *
+ * @param duration  Duration of the beep in milliseconds
+ */
+void beep(int duration) {
+  digitalWrite(BUZZER, HIGH);   // Buzzer ON
+  delay(duration);               // Wait for specified time
+  digitalWrite(BUZZER, LOW);    // Buzzer OFF
 }
 
-// =============================================================
-//  FUNCTION: printUID
-//  PURPOSE : Prints the scanned card's UID to the Serial Monitor
-//            in HEX format, e.g.  A3 4F 2B 11
-//  PARAMS  : uid     – pointer to the UID byte array
-//            uidSize – number of bytes in the UID
-// =============================================================
-void printUID(byte *uid, byte uidSize) {
-  for (byte i = 0; i < uidSize; i++) {
-    if (uid[i] < 0x10) Serial.print(F("0")); // Leading zero for single-digit hex
-    Serial.print(uid[i], HEX);
-    if (i < uidSize - 1) Serial.print(F(" "));
+
+// ============================================================
+//  FUNCTION: blinkLED()
+// ============================================================
+/**
+ * @brief  Blinks a specified LED a given number of times.
+ *
+ * Used for visual startup confirmation and status signaling.
+ * Each blink consists of one ON period and one OFF period,
+ * both of length delayMs milliseconds.
+ *
+ * @param pin      The Arduino pin number connected to the LED
+ * @param times    Number of times to blink the LED
+ * @param delayMs  Duration (ms) for each ON and OFF phase
+ */
+void blinkLED(int pin, int times, int delayMs) {
+
+  for (int i = 0; i < times; i++) {
+    digitalWrite(pin, HIGH);    // LED ON
+    delay(delayMs);
+    digitalWrite(pin, LOW);     // LED OFF
+    delay(delayMs);
   }
-  Serial.println(); // New line after full UID
 }
+
+
+// ============================================================
+//  END OF FILE
+// ============================================================
+/**
+ * ============================================================
+ *  FUTURE IMPROVEMENTS / EXTENSIONS:
+ * ============================================================
+ *
+ *  1. LCD Display    -- Add a 16x2 I2C LCD to show "Welcome!"
+ *                       or "Access Denied" messages on screen.
+ *
+ *  2. EEPROM Storage -- Store authorized UIDs in EEPROM so they
+ *                       persist even after power loss.
+ *
+ *  3. Master Card    -- Implement an enrollment mode where a
+ *                       special master card adds new UIDs
+ *                       dynamically without reprogramming.
+ *
+ *  4. Logging        -- Add an SD card module to log every
+ *                       access attempt with timestamps.
+ *
+ *  5. RTC Module     -- Use a DS3231 Real-Time Clock to add
+ *                       time-based access restrictions
+ *                       (e.g., access only between 9am-5pm).
+ *
+ *  6. Wi-Fi / IoT    -- Replace Arduino Uno with an ESP32 and
+ *                       send access logs to a cloud dashboard.
+ *
+ * ============================================================
+ */
