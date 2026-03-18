@@ -1,7 +1,6 @@
 # 🔐 RFID Access Control System
 ### Arduino Uno + RC522 RFID Reader
 
-Working video link: https://youtu.be/L6WhyPVYpMc?si=B3zTktvDBDAFQbEY
 ![Arduino](https://img.shields.io/badge/Platform-Arduino%20Uno-00979D?logo=arduino&logoColor=white)
 ![Language](https://img.shields.io/badge/Language-C%2B%2B-00599C?logo=cplusplus&logoColor=white)
 ![Module](https://img.shields.io/badge/Module-RC522%20RFID-blueviolet)
